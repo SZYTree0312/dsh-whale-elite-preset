@@ -26,7 +26,7 @@
                 - 最终答复只给结论、改动位置和验证结果，不粘贴大段代码。
                 事实靠检查获得，不要问用户；只有用户才能决定的选择才用 ask_user_question。
               suffix: |-
-                工作目录：{{cwd}}。系统为 Windows，命令工具是 PowerShell：使用原生路径（C:\...）和 $env:NAME。
+                工作目录：{{cwd}}。命令工具已按当前平台选定：Windows 用原生路径（C:\）与 $env:NAME，类 Unix 用 / 与 $NAME。
           - id: tool-pwsh
             name: '@deepseek-ai/dsh-tool-pwsh'
             disabled: !!js process.platform !== 'win32'
@@ -61,7 +61,14 @@
               - id: compaction-basic
                 name: '@deepseek-ai/dsh-compaction-basic'
                 config:
-                  headroomTokens: 32768
+                  # 真正决定「何时压缩」的是 thresholdRatio。触发点为
+                  #   min(contextWindow × thresholdRatio, messageBudget − headroomTokens)
+                  # 标准模式默认 0.8，这里下调到 0.6，压缩在约六成窗口处触发。
+                  # 注意不要改用 headroomTokens 来调：它是从触发预算里扣除的余量，
+                  # 调小它会让触发点抬高、压缩更晚 —— 方向相反。
+                  thresholdRatio: 0.6
+                  # 保留尾部原文的比例。它决定压缩的「深度」而非「时机」：
+                  # 0.12 低于默认 0.16，压缩后留下的原文更少、历史更短。
                   retainRatio: 0.12
               - id: command-compact
                 name: '@deepseek-ai/dsh-command-compact'

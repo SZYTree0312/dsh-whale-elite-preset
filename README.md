@@ -14,8 +14,8 @@ Host / Client 代码——只插入一条 `@deepseek-ai/dsh-agent-preset` 声明
 | 插件行 | 19 | 11 | 去掉 goal、plan-mode、4 个子代理、workflow、ralph、web、present、plugin-manager |
 | 工作区指令文件 | 加载（`agent-instructions`，64 KB 上限） | 不加载 | 不再把 AGENTS.md 链渲染进 prompt |
 | 运行时上下文 | 注入 | `includeRuntimeContext: false` | 系统提示不随运行时状态变动 |
-| 压缩头寸 `headroomTokens` | 65536 | 32768 | 更早触发压缩 |
-| 压缩保留尾部 `retainRatio` | 0.16 | 0.12 | 更早触发压缩 |
+| 压缩压力阈值 `thresholdRatio` | 0.8 | 0.6 | 约六成窗口即触发压缩（**真正控制时机的是这一项**）|
+| 压缩保留尾部 `retainRatio` | 0.16 | 0.12 | 压缩更彻底，留下的原文更少 |
 | 工具结果裁剪阈值 | 8192 字符 | 4096 字符 | 长输出更早被裁 |
 | 裁剪保留 head / tail | 4096 / 1024 | 2048 / 512 | 单条工具结果更小 |
 
@@ -58,6 +58,9 @@ dsh plugin --profile web remove dsh-whale-elite-preset
 
 上游基线 `deepseek-ai/deepseek-harness` `0.2.0-rc.2`。上游明示会有破坏性变更，
 预设内的插件名若随版本改名，本补丁需同步调整。
+
+平台方面，工具面与 persona 提示都按当前平台适配：Windows 启用 `tool-pwsh`，
+其他平台启用 `tool-bash`；平台提示本身是中立的，不需要手工改。
 
 ## 许可证
 
