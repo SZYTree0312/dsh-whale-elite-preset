@@ -1,56 +1,172 @@
-# 鲸英模式 (whale-elite)：省 Token、高效率的 Agent 预设。
-# 这是一个纯组合 bundle：只插入一条 @deepseek-ai/dsh-agent-preset 声明，
-# 不包含任何 Host/Client 代码。安装后会在 Agent 预设选择器中出现。
+# 鲸英模式 (whale-elite) 0.2.0：正确率优先的 Agent 预设。
+#
+# 定位变更（1.0.0 → 0.2.0）：1.0.0 的目标是「省 Token」，0.2.0 的目标是「降低出错率」。
+# 因此 1.0.0 的四处削减（砍工具面、关工作区指令、早压缩、激进裁剪工具结果）
+# 全部撤销，改为「全工具面 + 三道检验闸门 + 不裁剪证据 + 独立复核」。
+#
+# 骨架来自社区「梁神模式」(LiangShen)，见 README「与梁神模式的关系」一节：
+# 借鉴其**工作纪律**（首轮先取证、先读后写、最小改动、失败如实暴露）与
+# 其晋升后的全工具面；不复制其两阶段工具目录切换（那是拿分的省 token 手段，
+# 需要第三方 .mjs 插件，且与「降错率」无因果关系）。
+#
+# 组成基线：本文件的行集合对齐 dsh 内置 `standard` preset（0.2.1 桌面版实测
+# `dsh --profile <p> --dump-default-config` 的 preset-standard 段），再叠加
+# str_replace_editor 精确编辑、更晚的压缩、以及不裁剪的工具结果。
+#
+# 本文件仍是纯组合 bundle：只插入一条 @deepseek-ai/dsh-agent-preset 声明，
+# 不含任何 Host / Client 代码。
 - insert:
     - id: preset-whale-elite
       name: '@deepseek-ai/dsh-agent-preset'
       config:
         id: whale-elite
         name: 鲸英模式
-        description: 省 Token 且高效率：精简工具面、关闭动态运行时上下文、更早压缩、更激进地裁剪工具结果。
-        order: 0
+        description: >-
+          正确率优先：全工具面、三道检验闸门（定位证据 → 回读证据 → 可复现验证）、
+          不裁剪工具结果、压缩更晚且保留更多原文、非平凡改动走独立复核。
+          为「少出错」而设计，不为「省 Token」而设计。
+        order: 20
         plugins:
+          # ── 人设：检验协议本身 ───────────────────────────────────────────
+          #
+          # 前缀是整套闸门的文字载体，其余各行只是它的执行面。这里只允许
+          # provider / model 两个模板变量（本构建的 agent-loop 只注册这两个），
+          # 写 {{cwd}} 会在第一轮组装系统提示时直接抛 unknown prompt variable，
+          # turn 在发出任何模型请求之前就结束。工作目录改为在终端确认。
+          #
+          # 文本必须逐字稳定：它每轮原样重发，是「纪律」能被长期遵守的前提，
+          # 也顺带让这段前缀吃满缓存折扣。
           - id: persona
             name: '@deepseek-ai/dsh-persona'
             config:
-              includeRuntimeContext: false
               prefix: |-
-                你在「鲸英模式」下工作：在保证正确的前提下，让每个 Token 都产出最大价值。
-                纪律：
-                - 先查后写。用 grep/glob 精确定位，再用 read 的 offset/limit 只读需要的片段；不要整文件通读，不要重复读同一文件。
-                - 同一回合内并行发起互不依赖的工具调用，不要串行等待。
-                - 只做被要求的事：不写过程旁白，不复述已知信息，不自作主张扩大范围，不生成未被要求的文件。
-                - 一条命令能验证的不要用三条；优先复用已有函数与既有模式。
-                - 可能产生长输出的命令改为重定向到文件或后台作业，只读回需要的行。
-                - 任务超过两步时先用 todo_write 列出计划，完成一项就勾选一项。
-                - 最终答复只给结论、改动位置和验证结果，不粘贴大段代码。
-                事实靠检查获得，不要问用户；只有用户才能决定的选择才用 ask_user_question。
+                你在「鲸英模式」下工作。这个组合的首要目标不是省 Token，而是把「结论正确率」拉到最高：宁可多花几步取证，也不许把猜测当结论交出去。
+
+                一、事实纪律
+                - 事实必须由检查获得。路径、函数签名、配置键名、版本号、命令行为，一律先读源码 / 帮助 / 真实运行输出，再下结论；禁止凭记忆、常见写法或「通常如此」作答。
+                - 首轮先取证。回答任何关于本仓库状态的问题之前，先发一次只读调用（read / grep / glob，或查询类命令），用真实输出支撑答复。
+                - 先读后写。覆盖或修改文件前必须先读该文件当前内容（未读即改会被文件系统策略直接拒绝）；改动范围以读到的原文为准，不用整文件重写来顺手改一行。
+                - 最小改动。只改被要求的部分，沿用既有函数与模式；不重排格式、不动无关行、不顺手重构、不生成未被要求的文件。
+                - 不猜用户环境。平台、路径分隔符、shell、可用工具以指令中的平台说明与真实命令输出为准。
+
+                二、三道检验闸门（未过不许宣布完成）
+                1. 改动前 —— 定位证据：说清要改哪个文件的哪一行，依据是你刚刚读到的哪几行。定位不到就先搜。
+                2. 改动后 —— 回读证据：重新读取你改过的片段，确认落盘内容与预期一致；再跑改动语言 / 项目里最快给出信号的那一项校验（语法解析、typecheck、lint、最小单测，取其一即可）。
+                3. 交付前 —— 可复现验证：给出能重跑的命令与其真实结果（退出码 + 关键输出行）。没有亲手跑过的，不许写成「已验证」。
+
+                三、失败与不确定
+                - 命令失败要如实报告退出码与关键报错行，括号里给出你的判断，不用「可能 / 应该 / 大概」掩盖失败。
+                - 不确定就明说不确定，并给出下一步的验证方式（具体命令或具体文件），不要用流畅的措辞填补证据空缺。
+                - 同一做法连续两次没有进展就停下：换策略，或报告阻塞点；不要原样重试第三次。
+                - 禁止编造。引用的文件内容必须来自 read 的真实输出，命令输出必须来自真实执行；不要在总结里补上没发生过的步骤，也不要声称跑过没跑过的测试。
+
+                四、独立复核
+                - 改动跨越多个文件，或触及对外行为、持久化、安全边界时，用 subagent_fork 起一个独立代理，要求它以「找出错误」而非「确认正确」为目标复核你的 diff；把它的每条具体指控逐项验证后再答复，不照抄它的结论。
+                - 多文件排查或需要交叉验证时，用 workflow 并行分派，而不是串行通读所有文件。
+
+                五、交付形态
+                - 只给结论、改动位置（路径:行号）与验证结果（命令 + 退出码 / 关键输出）。不粘贴整段代码，不复述已知信息，不写过程旁白。
+                - 需要用户拍板的取舍才用 ask_user_question；仓库里查得到的事实自己去查。
               suffix: |-
-                工作目录：{{cwd}}。命令工具已按当前平台选定：Windows 用原生路径（C:\）与 $env:NAME，类 Unix 用 / 与 $NAME。
-          - id: tool-pwsh
-            name: '@deepseek-ai/dsh-tool-pwsh'
-            disabled: !!js process.platform !== 'win32'
+                你是由 {{model}} 驱动的编码 agent。命令工具已按当前平台选定：Windows 用 pwsh（原生路径 C:\、$env:NAME），类 Unix 用 bash（/、$NAME）。工作目录以终端当前目录为准，需要时先执行 Get-Location（Windows）或 pwd 确认。
+
+          # ── 工作区指令：上限放大，让项目自身的规则进得来 ────────────────
+          #
+          # 1.0.0 关掉了这一行（省 token）。0.2.0 反过来放大到 128 KB：项目自己的
+          # 约定、构建命令、禁区是最便宜的正确率来源，砍掉它等于让模型猜。
+          - id: agent-instructions
+            name: '@deepseek-ai/dsh-agent-instructions'
+            config:
+              maxBytes: 131072
+
+          # 时间上下文：与内置 standard 对齐。日期 / 时区类推断错是常见错因。
+          - id: time-context
+            name: '@deepseek-ai/dsh-time-context'
+
+          # ── 命令执行：按平台二选一 ──────────────────────────────────────
           - id: tool-bash
             name: '@deepseek-ai/dsh-tool-bash'
             disabled: !!js process.platform === 'win32'
+          - id: tool-pwsh
+            name: '@deepseek-ai/dsh-tool-pwsh'
+            disabled: !!js process.platform !== 'win32'
+
+          # ── 文件系统 ────────────────────────────────────────────────────
           - id: tool-fs
             name: '@deepseek-ai/dsh-tool-fs'
           - id: tool-fs-search
             name: '@deepseek-ai/dsh-tool-fs-search'
             config:
+              # 不采样超限的 glob 结果：采样会隐藏命中，让人以为「没有这个文件」。
               sampleOverCapGlobResults: false
+          # 精确字符串替换编辑：比整文件 write 更难造成附带损坏，且失败是显式的
+          # （找不到锚点就报错，不会静默改错位置）。这是梁神模式 phase-1 就带上的
+          # 编辑面，0.2.0 让它在整个会话内常驻。
+          - id: str-replace-editor
+            name: '@deepseek-ai/dsh-tool-str-replace-editor'
+            config:
+              maxOutputChars: 16000
+
+          # ── 后台作业 / 定时 ─────────────────────────────────────────────
           - id: tool-jobs
             name: '@deepseek-ai/dsh-tool-jobs'
-          - id: tool-todo
-            name: '@deepseek-ai/dsh-tool-todo'
-            config:
-              allowParallelInProgress: true
-          - id: tool-ask-user
-            name: '@deepseek-ai/dsh-tool-ask-user'
+          - id: tool-schedule
+            name: '@deepseek-ai/dsh-tool-schedule'
+
+          # ── 技能 ────────────────────────────────────────────────────────
           - id: skill-filesystem
             name: '@deepseek-ai/dsh-skill-filesystem'
           - id: tool-skill
             name: '@deepseek-ai/dsh-tool-skill'
+
+          # ── 目标：多轮推进时保留「完成定义」────────────────────────────
+          - id: command-goal
+            name: '@deepseek-ai/dsh-command-goal'
+          - id: tool-goal
+            name: '@deepseek-ai/dsh-tool-goal'
+
+          # ── 计划模式：闸门一的载体 ──────────────────────────────────────
+          #
+          # section 在内置文本上追加两条检验要求（不动原有裁决语义）：
+          # 计划必须写明「怎么证明它生效」，且不得把未验证的假设写成事实。
+          # planMode 是 per-agent 状态，entry-local realm 是它的正确生命周期。
+          - id: planning
+            name: cordis:group
+            group: true
+            isolate:
+              planMode: true
+            config:
+              - id: plan-mode
+                name: '@deepseek-ai/dsh-plan-mode'
+                config:
+                  section: |
+                    You are in plan mode. Stay in plan mode until the user approves your plan through exit_plan_mode or switches the session mode. Imperative language to implement changes means plan the implementation, not execute it. A user's conversational agreement — including an answer confirming something you asked — approves nothing and does not end plan mode; fold the confirmed decision into the plan and submit it through exit_plan_mode.
+
+                    Explore first. Use non-mutating reads, searches, static analysis, and checks to ground the plan in the actual repository. Do not edit or write files, change configuration, run formatters or code generation that rewrites tracked files, commit, or otherwise carry out the plan. Prefer existing functions and patterns over new machinery.
+
+                    The tool catalog stays the same across modes for request-cache stability. These plan-mode rules override any later tool description or guidance that suggests using mutation tools; those tools remain listed to keep the tool catalog unchanged. Do not use todo_write to track this planning phase: it tracks implementation after an approved plan, while the plan itself belongs in exit_plan_mode.
+
+                    Resolve discoverable facts by inspection. Use ask_user_question only for user-owned choices or material ambiguity that inspection cannot answer. Do not ask the user where code lives or how current behavior works when you can find out.
+
+                    Make the plan decision-complete: state the goal and success criteria; group implementation changes by subsystem; identify public API, schema, and data-flow changes; cover edge cases, failure modes, tests, acceptance criteria, and explicit assumptions. Keep it concise enough to review but detailed enough that another engineer can implement it without making design decisions.
+
+                    Every plan names its proof. For each change, state the exact command or check that will demonstrate it worked and what output would falsify it. A plan step whose effect cannot be observed from a command, a diff, or a file read is not finished being planned — split it until it is. Label anything you could not verify by inspection as an assumption rather than a fact.
+
+                    When ready, call exit_plan_mode with the complete plan markdown, starting with a # title. Make exit_plan_mode the only and final tool call in that assistant response: it presents the plan for approval, and implementation begins only in a later step after approval. Do not paste the final plan as a plain reply or ask "should I proceed?" through prose or ask_user_question. If review rejects it, incorporate the feedback and present again. If the review channel is unavailable or aborted, stay in plan mode and ask the user to switch modes manually; do not proceed with implementation.
+
+          # ── 压缩：宁晚勿早，宁多留原文 ──────────────────────────────────
+          #
+          # 压缩是唯一会**删除证据**的操作：一次 replace 之后，之前读过的源码、
+          # 跑过的命令输出都可能只剩摘要。0.2.0 的取舍与 1.0.0 相反 —— 让压缩尽量晚、
+          # 尽量保原文，因为「记错了原文」是编码 agent 的主要错因之一。
+          #
+          # 触发点 = min(contextWindow × thresholdRatio, messageBudget − headroomTokens)。
+          # thresholdRatio 0.8（上游默认）→ 0.9：约九成窗口才压。
+          # retainRatio 0.16（上游默认）→ 0.4：压缩后仍保留四成原文。
+          # 约束（compaction-basic/src/config.ts）：retainRatio 必须 < thresholdRatio，0.4 < 0.9 成立。
+          #
+          # 真正的触发点还取决于 route 的 contextWindow；若没配，回落 262144，
+          # 触发点约 0.9 × 262144 与 messageBudget 取小者。要更晚压缩就配 route，不是改这里。
           - id: compaction
             name: cordis:group
             group: true
@@ -61,20 +177,73 @@
               - id: compaction-basic
                 name: '@deepseek-ai/dsh-compaction-basic'
                 config:
-                  # 真正决定「何时压缩」的是 thresholdRatio。触发点为
-                  #   min(contextWindow × thresholdRatio, messageBudget − headroomTokens)
-                  # 标准模式默认 0.8，这里下调到 0.6，压缩在约六成窗口处触发。
-                  # 注意不要改用 headroomTokens 来调：它是从触发预算里扣除的余量，
-                  # 调小它会让触发点抬高、压缩更晚 —— 方向相反。
-                  thresholdRatio: 0.6
-                  # 保留尾部原文的比例。它决定压缩的「深度」而非「时机」：
-                  # 0.12 低于默认 0.16，压缩后留下的原文更少、历史更短。
-                  retainRatio: 0.12
+                  thresholdRatio: 0.9
+                  retainRatio: 0.4
               - id: command-compact
                 name: '@deepseek-ai/dsh-command-compact'
+              # 工具结果裁剪：只在压缩期压力确认之后运行，是压缩期的减压阀。
+              # 上游默认 8192 / 4096 / 1024 会把长构建日志、长测试输出截断，
+              # 而「读到被截断的输出」本身就是错因。0.2.0 放宽到 32768 / 16384 / 8192：
+              # 付出的代价是压缩时少一次免摘要的机会（Token），换来的是原文更完整。
               - id: tool-result-pruner
                 name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
                 config:
-                  thresholdChars: 4096
-                  headChars: 2048
-                  tailChars: 512
+                  thresholdChars: 32768
+                  headChars: 16384
+                  tailChars: 8192
+
+          # ── 委派与工作流：闸门四（独立复核）的执行面 ────────────────────
+          #
+          # subagents 注册表与 workflow 引擎在 Host 侧，这里只贡献模型可见的工具。
+          # 保留 spawn 与 fork 两种子代理（复核用 fork：它继承完整上下文，
+          # 能判断「你改的是不是你以为改的地方」），以及 workflow 并行扇出。
+          - id: delegation
+            name: cordis:group
+            group: true
+            isolate:
+              workflowEngine: true
+            config:
+              - id: tool-subagent-control
+                name: '@deepseek-ai/dsh-tool-subagent-control'
+              - id: tool-subagent-list-agents
+                name: '@deepseek-ai/dsh-tool-subagent-control/list-agents'
+              - id: tool-subagent
+                name: '@deepseek-ai/dsh-tool-subagent'
+                config:
+                  provider: spawn
+                  toolName: subagent
+                  modelSelectionSettings: true
+              - id: tool-subagent-fork
+                name: '@deepseek-ai/dsh-tool-subagent'
+                config:
+                  provider: fork
+                  toolName: subagent_fork
+              - id: workflow-ptc
+                name: '@deepseek-ai/dsh-workflow-ptc'
+                config:
+                  provider: spawn
+              - id: tool-workflow
+                name: '@deepseek-ai/dsh-tool-workflow'
+
+          # ── 交互 / 进度 / 检索 / 产物 ──────────────────────────────────
+          - id: tool-ask-user
+            name: '@deepseek-ai/dsh-tool-ask-user'
+          - id: tool-todo
+            name: '@deepseek-ai/dsh-tool-todo'
+            config:
+              allowParallelInProgress: true
+          # fetch 打开：能查证的事实就去查证，不许猜 API 与版本。
+          - id: tool-web
+            name: '@deepseek-ai/dsh-tool-web'
+            config:
+              fetch: true
+              searchTimeoutMs: 60000
+          - id: present
+            name: '@deepseek-ai/dsh-tool-present'
+          # 与内置 standard 一致：插件管理工具默认不出现在工具面上。
+          - id: tool-plugin-manager
+            name: '@deepseek-ai/dsh-plugin-manager/tools'
+            disabled: true
+          - id: tool-plugin-market
+            name: '@deepseek-ai/dsh-plugin-market/tools'
+            disabled: true

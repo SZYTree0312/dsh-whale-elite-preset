@@ -1,22 +1,24 @@
 {
   "name": "dsh-whale-elite-preset",
-  "version": "1.0.0",
+  "version": "0.2.0",
   "type": "module",
-  "description": "鲸英模式：省 Token、高效率的 Agent 预设",
+  "description": "鲸英模式 0.2.0：正确率优先的 Agent 预设（三道检验闸门）",
   "keywords": [
     "deepseek-harness",
     "dsh",
     "dsh-plugin",
     "agent-preset",
-    "token-saving"
+    "verification",
+    "correctness"
   ],
   "license": "MIT",
   "files": [
-    "cordis.patch.yml"
+    "cordis.patch.yml",
+    "scripts"
   ],
   "meta": {
     "title": "鲸英模式",
-    "description": "省 Token、高效率的 Agent 组合：精简工具面、关闭动态运行时上下文、更早压缩、更激进地裁剪工具结果。"
+    "description": "正确率优先：全工具面、三道检验闸门（定位证据 → 回读证据 → 可复现验证）、不裁剪工具结果、压缩更晚且保留更多原文、非平凡改动走独立复核。"
   },
   "dsh": {
     "bundle": {
